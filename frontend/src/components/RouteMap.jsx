@@ -24,6 +24,20 @@ function formatLocalEta(etaIso, shiftHours = 0) {
   });
 }
 
+// Is the current map view actually fitted to these bounds? A whole-USA
+// view also "contains" the corridor, so contains() alone cannot prove
+// the fit worked — the zoom must also be at (near) the zoom that fits
+// these bounds.
+function isViewFitted(map, bounds) {
+  if (!map || !bounds || !bounds.isValid()) return true;
+  try {
+    const targetZoom = map.getBoundsZoom(bounds, false, [36, 36]);
+    return map.getBounds().contains(bounds) && map.getZoom() >= targetZoom - 0.5;
+  } catch {
+    return map.getZoom() > 4;
+  }
+}
+
 export default function RouteMap({
   origin,
   destination,
@@ -39,11 +53,33 @@ export default function RouteMap({
   const heatmapLayerRef = useRef(null);
   const markersLayerRef = useRef(null);
   const boundsRef = useRef(null);
-  const hasFittedInitialRef = useRef(false);
+  const fitTimersRef = useRef([]);
 
   const [showHeatmap, setShowHeatmap] = useState(true);
 
   const selectedRoute = routes.find((r) => r.id === selectedRouteId) || routes[0];
+
+  // Fit the map to the route bounds and VERIFY the fit actually took
+  // effect. A single blind fitBounds can be lost to a layout shift or
+  // an interrupted zoom animation — and the old code then never retried,
+  // leaving the map zoomed out forever. This retries at 300/800/1500ms
+  // (max 3) until the view really contains the corridor at the fit zoom.
+  const fitBoundsVerified = (bounds, attempt = 0) => {
+    const map = mapInstanceRef.current;
+    if (!map || !bounds || !bounds.isValid()) return;
+    map.invalidateSize({ animate: false });
+    map.fitBounds(bounds, { padding: [36, 36], animate: false });
+    if (!isViewFitted(map, bounds) && attempt < 3) {
+      const delays = [300, 800, 1500];
+      const id = setTimeout(() => fitBoundsVerified(bounds, attempt + 1), delays[attempt]);
+      fitTimersRef.current.push(id);
+    }
+  };
+
+  const clearFitTimers = () => {
+    fitTimersRef.current.forEach((id) => clearTimeout(id));
+    fitTimersRef.current = [];
+  };
 
   useEffect(() => {
     const container = mapContainerRef.current;
@@ -64,11 +100,17 @@ export default function RouteMap({
     markersLayerRef.current = L.layerGroup().addTo(map);
     mapInstanceRef.current = map;
 
+    map.whenReady(() => {
+      if (boundsRef.current) fitBoundsVerified(boundsRef.current);
+    });
+
     const observer = new ResizeObserver(() => {
       map.invalidateSize({ animate: false });
-      if (boundsRef.current && !hasFittedInitialRef.current) {
-        map.fitBounds(boundsRef.current, { padding: [36, 36], animate: false });
-        hasFittedInitialRef.current = true;
+      // Refit whenever the current view is NOT fitted to the corridor.
+      // No permanent "already fitted" flag: a failed first fit can
+      // still recover on any later resize.
+      if (boundsRef.current && !isViewFitted(map, boundsRef.current)) {
+        fitBoundsVerified(boundsRef.current);
       }
     });
     observer.observe(container);
@@ -123,21 +165,21 @@ export default function RouteMap({
     if (allBounds.length > 0) {
       const leafletBounds = L.latLngBounds(allBounds);
       boundsRef.current = leafletBounds;
-      hasFittedInitialRef.current = false;
+      clearFitTimers();
       requestAnimationFrame(() => {
-        map.invalidateSize({ animate: false });
-        map.fitBounds(leafletBounds, { padding: [36, 36] });
-        hasFittedInitialRef.current = true;
+        fitBoundsVerified(leafletBounds);
       });
       // The rAF fit can run while the results panel is still mounting
-      // (container not laid out yet), leaving the map on the world view.
-      // Re-fit once more after layout settles.
+      // (container not laid out yet). Re-fit once more after layout
+      // settles; fitBoundsVerified verifies and retries on its own
+      // if the view still isn't fitted.
       const refitTimer = setTimeout(() => {
-        map.invalidateSize({ animate: false });
-        map.fitBounds(leafletBounds, { padding: [36, 36], animate: false });
-        hasFittedInitialRef.current = true;
+        fitBoundsVerified(leafletBounds);
       }, 500);
-      return () => clearTimeout(refitTimer);
+      return () => {
+        clearTimeout(refitTimer);
+        clearFitTimers();
+      };
     }
   }, [routes, selectedRouteId, onSelectRoute]);
 
@@ -233,6 +275,15 @@ export default function RouteMap({
           />
           Show Corridor Heatmap
         </label>
+        <button
+          type="button"
+          onClick={() => {
+            if (boundsRef.current) fitBoundsVerified(boundsRef.current);
+          }}
+          style={{ fontSize: '0.84rem', fontWeight: 600, cursor: 'pointer', padding: '4px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc' }}
+        >
+          Fit route
+        </button>
       </div>
 
       <div className="map-controls">
@@ -271,5 +322,4 @@ export default function RouteMap({
       <div ref={mapContainerRef} className="map-wrapper" />
     </div>
   );
-  
 }
