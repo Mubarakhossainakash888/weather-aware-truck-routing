@@ -1,40 +1,38 @@
 import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 _WEATHER_CACHE = {}
-CACHE_TTL_SECONDS = 900  # 15 minutes
+CACHE_TTL_SECONDS = 900
 
 
-def _parse_iso_to_utc(dt_str: str) -> datetime:
-    cleaned = dt_str.strip()
-    if cleaned.endswith("Z"):
-        cleaned = cleaned[:-1] + "+00:00"
-    dt = datetime.fromisoformat(cleaned)
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+def _to_utc_naive(dt_val) -> datetime:
+    if isinstance(dt_val, str):
+        cleaned = dt_val.strip()
+        if cleaned.endswith("Z"):
+            cleaned = cleaned[:-1] + "+00:00"
+        dt = datetime.fromisoformat(cleaned)
+    else:
+        dt = dt_val
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
-def _select_hourly_weather(hourly: dict, target_dt: datetime) -> dict:
+def _extract_at_time(hourly: dict, target_dt: datetime) -> dict:
     times = hourly.get("time", [])
     winds = hourly.get("wind_speed_10m", [])
     rains = hourly.get("rain", [])
     snows = hourly.get("snowfall", [])
 
     if not times:
-        return {
-            "wind_mph": 0.0,
-            "rain_in": 0.0,
-            "snow_in": 0.0,
-            "forecast_time": target_dt.isoformat(),
-        }
+        return {"wind_mph": 0.0, "rain_in": 0.0, "snow_in": 0.0}
 
     best_idx = 0
     best_diff = float("inf")
     for idx, t_str in enumerate(times):
-        t_dt = _parse_iso_to_utc(t_str)
+        t_dt = _to_utc_naive(t_str)
         diff = abs((t_dt - target_dt).total_seconds())
         if diff < best_diff:
             best_diff = diff
@@ -44,71 +42,85 @@ def _select_hourly_weather(hourly: dict, target_dt: datetime) -> dict:
         "wind_mph": round(float(winds[best_idx] or 0.0), 1),
         "rain_in": round(float(rains[best_idx] or 0.0), 2),
         "snow_in": round(float(snows[best_idx] or 0.0), 2),
-        "forecast_time": times[best_idx],
     }
 
 
-def fetch_batch_weather(points: list[tuple[float, float]]) -> list[dict]:
-    """
-    Fetches hourly forecasts for multiple (lat, lon) points in a single Open-Meteo request
-    with in-memory caching to avoid 429 rate limits on shared cloud IPs.
-    """
+def prefetch_checkpoints_weather(points: list[tuple[float, float]]) -> None:
     if not points:
-        return []
+        return
 
     now = time.time()
-    rounded_points = [(round(lat, 2), round(lon, 2)) for lat, lon in points]
-    results = [None] * len(rounded_points)
-    missing_indices = []
-    missing_coords = []
+    unique_missing = []
+    seen = set()
 
-    for idx, coord in enumerate(rounded_points):
-        cached = _WEATHER_CACHE.get(coord)
-        if cached and (now - cached["ts"]) < CACHE_TTL_SECONDS:
-            results[idx] = cached["hourly"]
-        else:
-            missing_indices.append(idx)
-            missing_coords.append(coord)
+    for lat, lon in points:
+        key = (round(float(lat), 2), round(float(lon), 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        cached = _WEATHER_CACHE.get(key)
+        if not cached or (now - cached["ts"]) >= CACHE_TTL_SECONDS:
+            unique_missing.append(key)
 
-    if missing_coords:
-        lats = ",".join(str(c[0]) for c in missing_coords)
-        lons = ",".join(str(c[1]) for c in missing_coords)
-        params = {
-            "latitude": lats,
-            "longitude": lons,
-            "hourly": "wind_speed_10m,rain,snowfall",
-            "wind_speed_unit": "mph",
-            "precipitation_unit": "inch",
-            "forecast_days": 4,
-            "timezone": "UTC",
+    if not unique_missing:
+        return
+
+    lats = ",".join(str(p[0]) for p in unique_missing)
+    lons = ",".join(str(p[1]) for p in unique_missing)
+
+    params = {
+        "latitude": lats,
+        "longitude": lons,
+        "hourly": "wind_speed_10m,rain,snowfall",
+        "wind_speed_unit": "mph",
+        "precipitation_unit": "inch",
+        "forecast_days": 4,
+        "timezone": "UTC",
+    }
+
+    resp = None
+    for attempt in range(3):
+        resp = requests.get(OPEN_METEO_URL, params=params, timeout=15)
+        if resp.status_code != 429:
+            break
+        time.sleep(1.5 * (attempt + 1))
+
+    resp.raise_for_status()
+    payload = resp.json()
+    items = payload if isinstance(payload, list) else [payload]
+
+    for key, item in zip(unique_missing, items):
+        _WEATHER_CACHE[key] = {
+            "ts": time.time(),
+            "hourly": item.get("hourly", {}),
         }
 
-        resp = None
-        for attempt in range(3):
-            resp = requests.get(OPEN_METEO_URL, params=params, timeout=15)
-            if resp.status_code != 429:
-                break
-            time.sleep(1.5 * (attempt + 1))
 
-        resp.raise_for_status()
-        payload = resp.json()
+def get_checkpoint_weather_and_slider(lat: float, lon: float, eta_dt) -> dict:
+    key = (round(float(lat), 2), round(float(lon), 2))
+    cached = _WEATHER_CACHE.get(key)
+    if not cached or (time.time() - cached["ts"]) >= CACHE_TTL_SECONDS:
+        prefetch_checkpoints_weather([key])
+        cached = _WEATHER_CACHE.get(key, {"hourly": {}})
 
-        # Open-Meteo returns a dict for 1 coordinate, or a list of dicts for multiple coordinates
-        hourly_list = payload if isinstance(payload, list) else [payload]
+    hourly = cached["hourly"]
+    base_dt = _to_utc_naive(eta_dt)
+    current_wx = _extract_at_time(hourly, base_dt)
 
-        for idx, item in zip(missing_indices, hourly_list):
-            hourly_data = item.get("hourly", {})
-            _WEATHER_CACHE[rounded_points[idx]] = {
-                "ts": time.time(),
-                "hourly": hourly_data,
-            }
-            results[idx] = hourly_data
+    slider_series = []
+    for offset in range(0, 49, 3):
+        step_dt = base_dt + timedelta(hours=offset)
+        step_wx = _extract_at_time(hourly, step_dt)
+        slider_series.append({
+            "offset": offset,
+            "wind_mph": step_wx["wind_mph"],
+            "rain_in": step_wx["rain_in"],
+            "snow_in": step_wx["snow_in"],
+        })
 
-    return results
-
-
-def get_weather_at_eta(lat: float, lon: float, eta_iso: str, hourly_data: dict | None = None) -> dict:
-    target_dt = _parse_iso_to_utc(eta_iso)
-    if hourly_data is None:
-        hourly_data = fetch_batch_weather([(lat, lon)])[0]
-    return _select_hourly_weather(hourly_data, target_dt)
+    return {
+        "wind_mph": current_wx["wind_mph"],
+        "rain_in": current_wx["rain_in"],
+        "snow_in": current_wx["snow_in"],
+        "slider_series": slider_series,
+    }
