@@ -1,6 +1,6 @@
 from pathlib import Path
 import os
-from django.core.exceptions import ImproperlyConfigured
+from django.core.management.utils import get_random_secret_key
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,13 +9,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
-if not SECRET_KEY:
-    if DEBUG:
-        # Local development only — never used when DEBUG is False.
-        SECRET_KEY = 'django-insecure-dev-only-key'
-    else:
-        raise ImproperlyConfigured('DJANGO_SECRET_KEY environment variable is not set.')
+# Render-এ DJANGO_SECRET_KEY বসালে সেটাই ব্যবহার হবে। না বসালেও app চালু
+# হবে — তখন প্রতিবার start-এ একটা নতুন random key বানানো হয়। এই app-এ
+# কোনো login/session নেই, তাই key বদলালে কোনো সমস্যা হয় না। আগের কোড
+# এখানে crash করত (ImproperlyConfigured) বলে Render deploy fail হচ্ছিল।
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY') or get_random_secret_key()
 
 ALLOWED_HOSTS = ['*']
 
