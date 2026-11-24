@@ -1,5 +1,6 @@
 import os
 import math
+import time
 import requests
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
@@ -20,8 +21,20 @@ def geocode_place(query: str) -> dict:
 
     headers = {"User-Agent": "SpotterWeatherTruckRouting/1.0 (assessment-app)"}
     params = {"q": query, "format": "json", "limit": 1}
-    resp = requests.get(NOMINATIM_URL, params=params, headers=headers, timeout=15)
-    resp.raise_for_status()
+    # One retry for transient Nominatim failures (rate limit / 5xx).
+    resp = None
+    last_error = None
+    for _attempt in range(2):
+        try:
+            resp = requests.get(NOMINATIM_URL, params=params, headers=headers, timeout=15)
+            resp.raise_for_status()
+            break
+        except requests.RequestException as exc:
+            last_error = exc
+            resp = None
+            time.sleep(1)
+    if resp is None:
+        raise last_error
     results = resp.json()
     if not results:
         raise ValueError(f"Location not found: {query}")
@@ -35,7 +48,9 @@ def geocode_place(query: str) -> dict:
 
 
 def _fetch_ors_routes(origin: dict, destination: dict, alternatives: bool = True) -> list:
-    api_key = os.environ.get("ORS_API_KEY", "").strip()
+    # Strip ALL whitespace: a pasted key once carried an embedded newline
+    # (with DEBUG=True) into a single env var, which broke every ORS call.
+    api_key = "".join(os.environ.get("ORS_API_KEY", "").split())
     if not api_key:
         return []
 

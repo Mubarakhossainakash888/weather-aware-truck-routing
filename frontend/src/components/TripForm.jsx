@@ -121,6 +121,7 @@ export default function TripForm({ onSubmit, loading }) {
         >
           Denver → Cheyenne (45,000 lb)
         </button>
+        -
         <button
           type="button"
           className="preset-btn"

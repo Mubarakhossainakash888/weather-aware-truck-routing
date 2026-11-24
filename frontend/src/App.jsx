@@ -103,6 +103,7 @@ export default function App() {
               routes={tripData.routes}
               selectedRouteId={selectedRouteId}
               onSelectRoute={setSelectedRouteId}
+              forecastHour={forecastHour}
             />
 
             <RouteMap

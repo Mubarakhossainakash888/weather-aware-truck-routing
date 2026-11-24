@@ -73,7 +73,7 @@ def plan_trip(request):
             for cp in sampled["checkpoints"]:
                 all_coords.append((cp["lat"], cp["lon"]))
 
-        prefetch_checkpoints_weather(all_coords)
+        weather_source = prefetch_checkpoints_weather(all_coords)
 
         enriched_routes = []
         for raw, sampled in zip(raw_routes, sampled_list):
@@ -129,8 +129,9 @@ def plan_trip(request):
             "departure": departure_dt.strftime("%Y-%m-%dT%H:%M"),
             "load_lb": load_lb,
             "interval_mi": interval_mi,
+            "weather_source": weather_source,
             "routes": ranked_routes,
         })
 
-    except Exception as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception:
+        return JsonResponse({"error": "Route planning failed. Please try again."}, status=400)

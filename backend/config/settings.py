@@ -1,13 +1,21 @@
 from pathlib import Path
 import os
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-spotter-truck-routing-key-2026')
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
+
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        # Local development only — never used when DEBUG is False.
+        SECRET_KEY = 'django-insecure-dev-only-key'
+    else:
+        raise ImproperlyConfigured('DJANGO_SECRET_KEY environment variable is not set.')
 
 ALLOWED_HOSTS = ['*']
 

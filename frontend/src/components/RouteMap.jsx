@@ -129,6 +129,15 @@ export default function RouteMap({
         map.fitBounds(leafletBounds, { padding: [36, 36] });
         hasFittedInitialRef.current = true;
       });
+      // The rAF fit can run while the results panel is still mounting
+      // (container not laid out yet), leaving the map on the world view.
+      // Re-fit once more after layout settles.
+      const refitTimer = setTimeout(() => {
+        map.invalidateSize({ animate: false });
+        map.fitBounds(leafletBounds, { padding: [36, 36], animate: false });
+        hasFittedInitialRef.current = true;
+      }, 500);
+      return () => clearTimeout(refitTimer);
     }
   }, [routes, selectedRouteId, onSelectRoute]);
 
@@ -262,4 +271,5 @@ export default function RouteMap({
       <div ref={mapContainerRef} className="map-wrapper" />
     </div>
   );
+  
 }

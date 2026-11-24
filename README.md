@@ -23,3 +23,22 @@ pip install -r requirements.txt
 cp .env.example .env
 # Add your OpenRouteService API key inside backend/.env
 python manage.py runserver
+```
+
+### 2. Frontend (React + Vite)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+The app runs at http://localhost:5173 and talks to the Django API at http://127.0.0.1:8000 by default. To point it at a deployed backend, set `VITE_API_BASE_URL` in `frontend/.env`.
+
+## Deployment
+- **Frontend (Vercel):** import the `frontend/` directory; set `VITE_API_BASE_URL` to the Render backend URL.
+- **Backend (Render):** deploy the `backend/` directory with Gunicorn (for example `gunicorn config.wsgi` from inside `backend/`); set these environment variables — `ORS_API_KEY` (OpenRouteService key), `DJANGO_SECRET_KEY` (a long random string), `DEBUG=False`. Never commit real keys; `.env` files are git-ignored.
+
+## How the risk engine works
+Wind, rain, and snow are each classified into Low / Moderate / High / Severe / No Travel (wind ≥55 mph is always No Travel; 45–54 mph with a load over 30,000 lb is No Travel; 35–44 mph with a load over 40,000 lb is Severe). The worst of the three sets the checkpoint risk. Routes are ranked by fewest No Travel miles, then Severe miles, then High miles, then lowest average risk, then shortest travel time.
+
+## Weather fallback
+Open-Meteo is the live forecast source. If it rate-limits the request (HTTP 429), the backend retries and then falls back to clearly labelled simulated weather so the app keeps working — the UI shows a "Simulated Weather" badge and notice in that case.
