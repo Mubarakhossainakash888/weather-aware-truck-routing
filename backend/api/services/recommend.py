@@ -41,13 +41,15 @@ def rank_and_recommend(routes: list) -> list:
             "avg_risk": round(avg_risk, 2),
         }
 
-    # Exact assessment sorting priority:
-    # 1. Fewest Severe miles
-    # 2. Fewest High miles
-    # 3. Lowest average risk
-    # 4. Shortest travel times
+    # Exact assessment sorting priority (with No Travel prioritized above Severe):
+    # 1. Fewest No Travel miles
+    # 2. Fewest Severe miles
+    # 3. Fewest High miles
+    # 4. Lowest average risk
+    # 5. Shortest travel times
     routes.sort(
         key=lambda r: (
+            r["risk_summary"]["no_travel_miles"],
             r["risk_summary"]["severe_miles"],
             r["risk_summary"]["high_miles"],
             r["risk_summary"]["avg_risk"],
@@ -64,7 +66,9 @@ def rank_and_recommend(routes: list) -> list:
         rs = best["risk_summary"]
         if len(routes) > 1:
             second = routes[1]["risk_summary"]
-            if rs["severe_miles"] < second["severe_miles"]:
+            if rs["no_travel_miles"] < second["no_travel_miles"]:
+                reason = f"Fewest No Travel miles ({rs['no_travel_miles']} mi vs {second['no_travel_miles']} mi)"
+            elif rs["severe_miles"] < second["severe_miles"]:
                 reason = f"Fewest Severe risk miles ({rs['severe_miles']} mi vs {second['severe_miles']} mi)"
             elif rs["high_miles"] < second["high_miles"]:
                 reason = f"Fewest High risk miles ({rs['high_miles']} mi vs {second['high_miles']} mi)"

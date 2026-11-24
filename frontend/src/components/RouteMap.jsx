@@ -40,6 +40,10 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
     markersLayerRef.current = L.layerGroup().addTo(map);
     mapInstanceRef.current = map;
 
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+
     return () => {
       map.remove();
       mapInstanceRef.current = null;
@@ -118,7 +122,13 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
 
     if (selectedRoute) {
       selectedRoute.checkpoints.forEach((cp) => {
-        const color = RISK_COLORS[cp.risk.level] || '#16a34a';
+        const step = cp.slider?.[forecastHour];
+        const activeLevel = step ? step.risk_level : cp.risk.level;
+        const activeWind = step ? step.wind_mph : cp.weather.wind_mph;
+        const activeRain = step ? step.rain_in : cp.weather.rain_in;
+        const activeSnow = step ? step.snow_in : cp.weather.snow_in;
+        const color = RISK_COLORS[activeLevel] || '#16a34a';
+
         const marker = L.circleMarker([cp.lat, cp.lon], {
           radius: 6,
           color: '#ffffff',
@@ -130,12 +140,12 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
         marker.bindPopup(`
           <div style="font-size:13px; line-height:1.45; min-width:190px;">
             <strong>Checkpoint #${cp.index} (${cp.distance_miles} mi)</strong><br/>
-            <span><b>ETA:</b> ${cp.eta_short}</span><br/>
-            <span><b>Risk:</b> <span style="color:${color}; font-weight:700;">${cp.risk.level}</span></span><br/>
+            <span><b>ETA:</b> ${cp.eta_short} (+${forecastHour}h shift)</span><br/>
+            <span><b>Risk:</b> <span style="color:${color}; font-weight:700;">${activeLevel}</span></span><br/>
             <hr style="margin:5px 0; border:none; border-top:1px solid #e2e8f0;"/>
-            <span><b>Wind:</b> ${cp.weather.wind_mph} mph</span><br/>
-            <span><b>Rain:</b> ${cp.weather.rain_in} in/hr</span><br/>
-            <span><b>Snow:</b> ${cp.weather.snow_in} in/hr</span><br/>
+            <span><b>Wind:</b> ${activeWind} mph</span><br/>
+            <span><b>Rain:</b> ${activeRain} in/hr</span><br/>
+            <span><b>Snow:</b> ${activeSnow} in/hr</span><br/>
             <small style="color:#475569;">${cp.risk.reasons.join('; ')}</small>
           </div>
         `);
@@ -145,9 +155,10 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
     }
 
     if (allBounds.length > 0) {
+      map.invalidateSize();
       map.fitBounds(L.latLngBounds(allBounds), { padding: [36, 36] });
     }
-  }, [origin, destination, routes, selectedRouteId, selectedRoute, onSelectRoute]);
+  }, [origin, destination, routes, selectedRouteId, selectedRoute, onSelectRoute, forecastHour]);
 
   useEffect(() => {
     const heatmapLayer = heatmapLayerRef.current;

@@ -15,10 +15,11 @@ export default function TripForm({ onSubmit, loading }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const utcDeparture = departure ? new Date(departure).toISOString() : new Date().toISOString();
     onSubmit({
       origin,
       destination,
-      departure,
+      departure: utcDeparture,
       load_lb: Number(loadLb),
       interval_mi: Number(intervalMi),
     });
@@ -77,7 +78,7 @@ export default function TripForm({ onSubmit, loading }) {
           <input
             id="loadWeight"
             type="number"
-            min="0"
+            min="1000"
             max="120000"
             step="500"
             value={loadLb}
