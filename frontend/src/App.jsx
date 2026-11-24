@@ -9,6 +9,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:800
 export default function App() {
   const [tripData, setTripData] = useState(null);
   const [selectedRouteId, setSelectedRouteId] = useState(null);
+  const [forecastHour, setForecastHour] = useState(0);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
   const [error, setError] = useState('');
@@ -38,6 +39,7 @@ export default function App() {
       }
 
       setTripData(data);
+      setForecastHour(0);
       const bestRoute = data.routes.find((r) => r.is_recommended) || data.routes[0];
       setSelectedRouteId(bestRoute ? bestRoute.id : null);
     } catch (err) {
@@ -109,9 +111,11 @@ export default function App() {
               routes={tripData.routes}
               selectedRouteId={selectedRouteId}
               onSelectRoute={setSelectedRouteId}
+              forecastHour={forecastHour}
+              onForecastHourChange={setForecastHour}
             />
 
-            <CheckpointTable route={selectedRoute} />
+            <CheckpointTable route={selectedRoute} forecastHour={forecastHour} />
           </>
         )}
       </main>

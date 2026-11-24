@@ -10,15 +10,37 @@ const RISK_COLORS = {
   'No Travel': '#7f1d1d',
 };
 
-export default function RouteMap({ origin, destination, routes, selectedRouteId, onSelectRoute }) {
+function formatLocalEta(etaIso, shiftHours = 0) {
+  if (!etaIso) return '';
+  const normalized = etaIso.endsWith('Z') || etaIso.includes('+') ? etaIso : `${etaIso}Z`;
+  const dt = new Date(normalized);
+  if (Number.isNaN(dt.getTime())) return etaIso;
+  dt.setHours(dt.getHours() + shiftHours);
+  return dt.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export default function RouteMap({
+  origin,
+  destination,
+  routes,
+  selectedRouteId,
+  onSelectRoute,
+  forecastHour,
+  onForecastHourChange,
+}) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const routesLayerRef = useRef(null);
   const heatmapLayerRef = useRef(null);
   const markersLayerRef = useRef(null);
   const boundsRef = useRef(null);
+  const hasFittedInitialRef = useRef(false);
 
-  const [forecastHour, setForecastHour] = useState(0);
   const [showHeatmap, setShowHeatmap] = useState(true);
 
   const selectedRoute = routes.find((r) => r.id === selectedRouteId) || routes[0];
@@ -44,8 +66,9 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
 
     const observer = new ResizeObserver(() => {
       map.invalidateSize({ animate: false });
-      if (boundsRef.current) {
+      if (boundsRef.current && !hasFittedInitialRef.current) {
         map.fitBounds(boundsRef.current, { padding: [36, 36], animate: false });
+        hasFittedInitialRef.current = true;
       }
     });
     observer.observe(container);
@@ -57,19 +80,13 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
     };
   }, []);
 
-  useEffect(() => {
-    setForecastHour(0);
-  }, [routes]);
-
+  // Effect 1: Draw route polylines and fit bounds ONLY when routes/selection change (not on slider change)
   useEffect(() => {
     const map = mapInstanceRef.current;
     const routesLayer = routesLayerRef.current;
-    const markersLayer = markersLayerRef.current;
-    if (!map || !routesLayer || !markersLayer || !routes?.length) return;
+    if (!map || !routesLayer || !routes?.length) return;
 
     routesLayer.clearLayers();
-    markersLayer.clearLayers();
-
     const allBounds = [];
 
     const orderedRoutes = [
@@ -103,6 +120,27 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
       polyline.addTo(routesLayer);
     });
 
+    if (allBounds.length > 0) {
+      const leafletBounds = L.latLngBounds(allBounds);
+      boundsRef.current = leafletBounds;
+      hasFittedInitialRef.current = false;
+      requestAnimationFrame(() => {
+        map.invalidateSize({ animate: false });
+        map.fitBounds(leafletBounds, { padding: [36, 36] });
+        hasFittedInitialRef.current = true;
+      });
+    }
+  }, [routes, selectedRouteId, onSelectRoute]);
+
+  // Effect 2: Update checkpoint markers, popups, and heatmap overlay when forecastHour or selectedRoute changes
+  useEffect(() => {
+    const markersLayer = markersLayerRef.current;
+    const heatmapLayer = heatmapLayerRef.current;
+    if (!markersLayer || !heatmapLayer) return;
+
+    markersLayer.clearLayers();
+    heatmapLayer.clearLayers();
+
     if (origin) {
       L.circleMarker([origin.lat, origin.lon], {
         radius: 8,
@@ -135,6 +173,7 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
         const activeRain = step ? step.rain_in : cp.weather.rain_in;
         const activeSnow = step ? step.snow_in : cp.weather.snow_in;
         const color = RISK_COLORS[activeLevel] || '#16a34a';
+        const localEtaLabel = formatLocalEta(cp.eta, forecastHour);
 
         const marker = L.circleMarker([cp.lat, cp.lon], {
           radius: 6,
@@ -145,9 +184,9 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
         });
 
         marker.bindPopup(`
-          <div style="font-size:13px; line-height:1.45; min-width:190px;">
+          <div style="font-size:13px; line-height:1.45; min-width:195px;">
             <strong>Checkpoint #${cp.index} (${cp.distance_miles} mi)</strong><br/>
-            <span><b>ETA:</b> ${cp.eta_short} (+${forecastHour}h shift)</span><br/>
+            <span><b>ETA (Local):</b> ${localEtaLabel}</span><br/>
             <span><b>Risk:</b> <span style="color:${color}; font-weight:700;">${activeLevel}</span></span><br/>
             <hr style="margin:5px 0; border:none; border-top:1px solid #e2e8f0;"/>
             <span><b>Wind:</b> ${activeWind} mph</span><br/>
@@ -158,41 +197,19 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
         `);
 
         marker.addTo(markersLayer);
+
+        if (showHeatmap) {
+          L.circle([cp.lat, cp.lon], {
+            radius: 24000,
+            stroke: false,
+            fillColor: color,
+            fillOpacity: 0.28,
+            interactive: false,
+          }).addTo(heatmapLayer);
+        }
       });
     }
-
-    if (allBounds.length > 0) {
-      const leafletBounds = L.latLngBounds(allBounds);
-      boundsRef.current = leafletBounds;
-      requestAnimationFrame(() => {
-        map.invalidateSize({ animate: false });
-        map.fitBounds(leafletBounds, { padding: [36, 36] });
-      });
-    }
-  }, [origin, destination, routes, selectedRouteId, selectedRoute, onSelectRoute, forecastHour]);
-
-  useEffect(() => {
-    const heatmapLayer = heatmapLayerRef.current;
-    if (!heatmapLayer) return;
-
-    heatmapLayer.clearLayers();
-    if (!showHeatmap || !selectedRoute) return;
-
-    selectedRoute.checkpoints.forEach((cp) => {
-      const step = cp.slider?.[forecastHour] || {
-        risk_level: cp.risk.level,
-      };
-      const color = RISK_COLORS[step.risk_level] || '#16a34a';
-
-      L.circle([cp.lat, cp.lon], {
-        radius: 24000,
-        stroke: false,
-        fillColor: color,
-        fillOpacity: 0.28,
-        interactive: false,
-      }).addTo(heatmapLayer);
-    });
-  }, [selectedRoute, forecastHour, showHeatmap]);
+  }, [origin, destination, selectedRoute, forecastHour, showHeatmap]);
 
   return (
     <div className="card">
@@ -218,7 +235,7 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
             min="0"
             max="48"
             value={forecastHour}
-            onChange={(e) => setForecastHour(Number(e.target.value))}
+            onChange={(e) => onForecastHourChange(Number(e.target.value))}
           />
           <span className="hour-tag">+{forecastHour} hrs</span>
         </div>
