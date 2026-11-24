@@ -16,6 +16,7 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
   const routesLayerRef = useRef(null);
   const heatmapLayerRef = useRef(null);
   const markersLayerRef = useRef(null);
+  const boundsRef = useRef(null);
 
   const [forecastHour, setForecastHour] = useState(0);
   const [showHeatmap, setShowHeatmap] = useState(true);
@@ -23,9 +24,10 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
   const selectedRoute = routes.find((r) => r.id === selectedRouteId) || routes[0];
 
   useEffect(() => {
-    if (!mapContainerRef.current || mapInstanceRef.current) return;
+    const container = mapContainerRef.current;
+    if (!container || mapInstanceRef.current) return;
 
-    const map = L.map(mapContainerRef.current, {
+    const map = L.map(container, {
       center: [39.8283, -98.5795],
       zoom: 4,
     });
@@ -40,11 +42,16 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
     markersLayerRef.current = L.layerGroup().addTo(map);
     mapInstanceRef.current = map;
 
-    setTimeout(() => {
-      map.invalidateSize();
-    }, 100);
+    const observer = new ResizeObserver(() => {
+      map.invalidateSize({ animate: false });
+      if (boundsRef.current) {
+        map.fitBounds(boundsRef.current, { padding: [36, 36], animate: false });
+      }
+    });
+    observer.observe(container);
 
     return () => {
+      observer.disconnect();
       map.remove();
       mapInstanceRef.current = null;
     };
@@ -155,8 +162,12 @@ export default function RouteMap({ origin, destination, routes, selectedRouteId,
     }
 
     if (allBounds.length > 0) {
-      map.invalidateSize();
-      map.fitBounds(L.latLngBounds(allBounds), { padding: [36, 36] });
+      const leafletBounds = L.latLngBounds(allBounds);
+      boundsRef.current = leafletBounds;
+      requestAnimationFrame(() => {
+        map.invalidateSize({ animate: false });
+        map.fitBounds(leafletBounds, { padding: [36, 36] });
+      });
     }
   }, [origin, destination, routes, selectedRouteId, selectedRoute, onSelectRoute, forecastHour]);
 
