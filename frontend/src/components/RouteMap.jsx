@@ -169,15 +169,19 @@ export default function RouteMap({
       requestAnimationFrame(() => {
         fitBoundsVerified(leafletBounds);
       });
-      // The rAF fit can run while the results panel is still mounting
-      // (container not laid out yet). Re-fit once more after layout
-      // settles; fitBoundsVerified verifies and retries on its own
-      // if the view still isn't fitted.
-      const refitTimer = setTimeout(() => {
-        fitBoundsVerified(leafletBounds);
-      }, 500);
+      // The first fit can land while the results panel is still
+      // mounting (container not at its final size yet), so it can
+      // come out loose — or be lost entirely. Re-fit unconditionally
+      // at 500ms / 1.5s / 3s / 5s: a later shot overwrites any
+      // earlier bad one, and by 5s the layout has settled. Nothing
+      // more is scheduled after that, so the user can pan/zoom
+      // freely. The "Fit route" button stays as the manual fallback.
+      [500, 1500, 3000, 5000].forEach((delay) => {
+        fitTimersRef.current.push(
+          setTimeout(() => fitBoundsVerified(leafletBounds), delay)
+        );
+      });
       return () => {
-        clearTimeout(refitTimer);
         clearFitTimers();
       };
     }
